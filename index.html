@@ -1222,7 +1222,7 @@
             }
         }
 
-        // --- MULTI-MIRROR JIOSAAVN FETCHER (WORKS ON VERCEL + LOCALHOST) ---
+        // --- MULTI-MIRROR JIOSAAVN FETCHER (WITH STRICT ARTIST MATCHING) ---
         async function fetchAudioStream(title, artist) {
             const query = encodeURIComponent(`${title} ${artist}`);
             
@@ -1235,6 +1235,9 @@
             ];
 
             const junkRegex = /\b(remix|dj|mashup|slowed|reverb|lofi|lo-fi|8d|karaoke|instrumental|ringtone|sped up)\b/i;
+            
+            // Extract the main artist (e.g., "Nusrat Fateh Ali Khan" from "Nusrat Fateh Ali Khan, Someone Else")
+            const targetArtistLower = artist.split(',')[0].trim().toLowerCase();
 
             for (const url of urlsToTry) {
                 try {
@@ -1242,12 +1245,27 @@
                     const results = res?.data?.results || res?.results;
                     
                     if (Array.isArray(results) && results.length > 0) {
-                        const cleanMatch = results.find(track => {
-                            const trackName = String(track?.name || track?.title || "");
-                            return !junkRegex.test(trackName);
-                        }) || results[0];
+                        
+                        // 1st Priority: Track is clean AND the API's singer matches our exact artist
+                        let matchedTrack = results.find(track => {
+                            const trackName = String(track?.name || track?.title || "").toLowerCase();
+                            const trackArtists = String(track?.primaryArtists || track?.singers || track?.subtitle || track?.artist || "").toLowerCase();
+                            
+                            const isClean = !junkRegex.test(trackName);
+                            const isCorrectArtist = trackArtists.includes(targetArtistLower);
+                            
+                            return isClean && isCorrectArtist;
+                        });
 
-                        const downloads = cleanMatch?.downloadUrl || cleanMatch?.media_url;
+                        // 2nd Priority: Fallback to just a clean track if strict matching failed (API might have misspelled the name)
+                        if (!matchedTrack) {
+                            matchedTrack = results.find(track => {
+                                const trackName = String(track?.name || track?.title || "").toLowerCase();
+                                return !junkRegex.test(trackName);
+                            }) || results[0];
+                        }
+
+                        const downloads = matchedTrack?.downloadUrl || matchedTrack?.media_url;
                         if (typeof downloads === "string" && downloads.startsWith("http")) {
                             return downloads.replace(/^http:\/\//i, "https://");
                         }
@@ -1263,7 +1281,6 @@
             }
             return null;
         }
-
         async function fetchCoverArt(song, index, playlistKey = currentPlaylistKey) {
             const cacheKey = getCacheKey(playlistKey, index);
             if (coverCache.has(cacheKey)) return coverCache.get(cacheKey);
